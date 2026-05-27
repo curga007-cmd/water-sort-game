@@ -23,6 +23,16 @@ const MIME = {
   '.wav' : 'audio/wav',
 };
 
+// ── 빠른 매칭 큐 (메모리) ──────────────────────────────────────
+let matchQueue = null; // { roomCode, ts }
+let matchTimer  = null;
+
+function clearMatch() {
+  matchQueue = null;
+  clearTimeout(matchTimer);
+  matchTimer = null;
+}
+
 // ── 점수 파일 ──────────────────────────────────────────────────
 function readScores() {
   try { return JSON.parse(fs.readFileSync(SCORES_FILE, 'utf8')); }
@@ -60,6 +70,43 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+
+  // ── 빠른 매칭 API ────────────────────────────────────────────
+  if (urlPath === '/api/match') {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', d => { body += d; });
+      req.on('end', () => {
+        try {
+          const { roomCode, action } = JSON.parse(body);
+          if (action === 'cancel') {
+            if (matchQueue && matchQueue.roomCode === roomCode) clearMatch();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          // 매칭 시도
+          if (matchQueue && Date.now() - matchQueue.ts < 60000) {
+            // 대기자 있음 → 매칭!
+            const connectTo = matchQueue.roomCode;
+            clearMatch();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ matched: true, connectTo }));
+          } else {
+            // 대기자 없음 → 큐 등록
+            clearMatch();
+            matchQueue = { roomCode, ts: Date.now() };
+            matchTimer = setTimeout(clearMatch, 60000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ matched: false, waiting: true }));
+          }
+        } catch (e) {
+          res.writeHead(400); res.end('error');
+        }
+      });
+      return;
+    }
+  }
 
   // ── 점수 API ──────────────────────────────────────────────────
   if (urlPath === '/api/scores') {

@@ -171,6 +171,19 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
 @keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}
 
 
+/* ── 빠른 매칭 ── */
+.btn-purple{background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;}
+.matching-box{background:rgba(255,255,255,.15);border-radius:20px;padding:28px 24px;
+  text-align:center;width:100%;margin:14px 0;}
+.matching-spinner{font-size:3em;animation:spinstar 1.2s linear infinite;display:block;margin-bottom:12px;}
+.matching-title{color:#fff;font-size:1.1em;font-weight:700;margin-bottom:6px;}
+.matching-sub{color:rgba(255,255,255,.65);font-size:.8em;}
+.matching-dots{display:flex;justify-content:center;gap:6px;margin-top:12px;}
+.matching-dots span{width:9px;height:9px;border-radius:50%;background:#fff;opacity:.3;
+  animation:blink 1.4s infinite both;}
+.matching-dots span:nth-child(2){animation-delay:.2s;}
+.matching-dots span:nth-child(3){animation-delay:.4s;}
+
 /* ── 방 코드 입력 ── */
 .code-join-wrap{display:flex;gap:8px;width:100%;margin:6px 0 4px;}
 .code-input{flex:1;background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.4);
@@ -322,7 +335,8 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
   </div>
 
   <div class="divider"><span>나만의 방</span></div>
-  <button class="btn btn-pink"   onclick="createRoom()">🏠 새 방 만들기</button>
+  <button class="btn btn-purple" onclick="quickMatch()">⚡ 빠른 매칭 (아무나와 대결!)</button>
+  <button class="btn btn-pink"   onclick="createRoom()">🏠 방 만들기 (코드로 초대)</button>
   <button class="btn btn-yellow" onclick="startSolo()">🎮 혼자 하기</button>
   <button class="btn btn-ghost"  onclick="showHall()" style="margin-top:8px;">🏆 명예의 전당</button>
 </div>
@@ -373,6 +387,17 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
       최소 1명 이상 입장하면 시작할 수 있어요
     </p>
   </div>
+  <!-- 빠른 매칭 대기 중 표시 -->
+  <div id="quickMatchWait" style="display:none;width:100%;">
+    <div class="matching-box">
+      <span class="matching-spinner">⚡</span>
+      <div class="matching-title">상대방 찾는 중...</div>
+      <div class="matching-sub">잠깐만요! 다른 플레이어를 찾고 있어요</div>
+      <div class="matching-dots"><span></span><span></span><span></span></div>
+    </div>
+    <button class="btn btn-ghost" onclick="cancelQuickMatch()" style="margin-top:4px;">✕ 취소</button>
+  </div>
+
   <div id="guestWaitMsg" style="display:none;flex-direction:column;align-items:center;">
     <div><span class="ldot">•</span><span class="ldot">•</span><span class="ldot">•</span></div>
     <p style="color:rgba(255,255,255,.75);font-size:.88em;margin-top:8px;">방장이 게임을 시작하면 바로 시작돼요!</p>
@@ -515,6 +540,10 @@ let playerConns = new Map(); // idx -> conn (host)
 let connState   = new Map(); // conn -> reservedIdx | 'active' (host)
 let hostConn    = null;      // guest
 
+// 빠른 매칭
+let quickMatchMode = false;
+let _qmPollTimer = null;
+
 // 레벨 선택
 let selectedLvs = [1,2,3,4,5]; // 이번 게임에서 플레이할 레벨 목록
 
@@ -531,7 +560,16 @@ let lobby = {}, peer = null, lobbyPeer = null;
 // ════════════════════════════════════
 function mkPeer(id) {
   return new Promise((ok,fail)=>{
-    const p = new Peer(id,{host:'0.peerjs.com',port:443,secure:true,path:'/',debug:0});
+    const p = new Peer(id,{
+      host:'0.peerjs.com',port:443,secure:true,path:'/',debug:0,
+      config:{iceServers:[
+        {urls:'stun:stun.l.google.com:19302'},
+        {urls:'stun:stun1.l.google.com:19302'},
+        {urls:'stun:stun2.l.google.com:19302'},
+        {urls:'stun:stun.cloudflare.com:3478'},
+        {urls:'stun:global.stun.twilio.com:3478'},
+      ]}
+    });
     p.on('open',()=>ok(p));
     p.on('error',e=>fail(e));
   });
@@ -683,7 +721,7 @@ async function joinRoomByCode(code){
   conn.on('open',()=>{/* wait for welcome */});
   conn.on('data',msg=>onGuestReceive(msg));
   conn.on('close',()=>{if(!gameOver)alert('방장과 연결이 끊어졌어요 😢');});
-  conn.on('error',()=>{alert('접속 실패 😢 방이 없거나 꽉 찼을 수 있어요');goLobby();});
+  conn.on('error',()=>{toast('접속 실패 😢 코드를 다시 확인하거나 잠시 후 시도해주세요');setTimeout(goLobby,1500);});
   // welcome 메시지 받으면 charScreen으로 이동 (onGuestReceive에서 처리)
 }
 
@@ -753,6 +791,7 @@ function handleCharChoose(conn,reservedIdx,charId){
 
   broadcastExcept(reservedIdx,{type:'playerJoined',idx:reservedIdx,charId});
   renderWaitPlayers(); updateStartBtn();
+  tryQuickMatchAutoStart();
 }
 
 function getTakenChars(){
@@ -898,6 +937,81 @@ function showWaitScreen(){
   renderWaitPlayers(); updateStartBtn();
 }
 
+// ════════════════════════════════════
+//  빠른 매칭
+// ════════════════════════════════════
+async function quickMatch(){
+  quickMatchMode=true;
+  isHost=true; soloMode=false; players={}; playerConns.clear(); connState.clear();
+  roomCode=genCode(); myIdx=0; gameStarted=false;
+  try{
+    peer=await mkPeer('wsort-'+roomCode);
+  }catch(e){toast('연결 오류 😢 다시 시도해주세요');quickMatchMode=false;return;}
+  peer.on('connection',onGuestConnect);
+  startLobbyPeer();
+
+  // 서버에 매칭 등록
+  show('waitScreen');
+  document.getElementById('shareCodeBox').style.display='none';
+  document.getElementById('waitCode').textContent='';
+  document.getElementById('startBtnWrap').style.display='none';
+  document.getElementById('guestWaitMsg').style.display='none';
+  document.getElementById('quickMatchWait').style.display='block';
+  renderWaitPlayers();
+
+  const res=await fetch('/api/match',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({roomCode})}).then(r=>r.json()).catch(()=>null);
+
+  if(!res){toast('매칭 서버 오류 😢');cancelQuickMatch();return;}
+
+  if(res.matched){
+    // 상대방이 이미 대기 중 → 내가 게스트로 접속
+    const connectTo=res.connectTo;
+    quickMatchMode=false;
+    if(peer){try{peer.destroy();}catch(_){}}peer=null;
+    isHost=false; myIdx=-1; myCharId=0; takenCharIds=new Set();
+    try{
+      peer=await mkPeer('wsort-guest-'+myId);
+    }catch(e){toast('연결 오류 😢');goLobby();return;}
+    const conn=peer.connect('wsort-'+connectTo,{reliable:true});
+    hostConn=conn;
+    conn.on('data',msg=>onGuestReceive(msg));
+    conn.on('close',()=>{if(!gameOver)toast('상대방과 연결이 끊어졌어요 😢');});
+    conn.on('error',()=>{toast('접속 실패 😢');setTimeout(goLobby,1500);});
+    // welcome 받으면 charScreen으로 이동
+    roomCode=connectTo;
+    document.getElementById('waitCode').textContent=`${roomCode} 방에 입장했어요`;
+  }
+  // matched=false: 내가 호스트로 대기, 상대방이 연결해올 때까지 대기
+}
+
+function cancelQuickMatch(){
+  clearTimeout(_qmPollTimer);
+  if(quickMatchMode && roomCode){
+    fetch('/api/match',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({roomCode,action:'cancel'})}).catch(()=>{});
+  }
+  quickMatchMode=false;
+  goLobby();
+}
+
+// 빠른 매칭: 게스트가 캐릭터 선택하면 자동 시작
+function tryQuickMatchAutoStart(){
+  if(!quickMatchMode||!isHost)return;
+  // 게스트 1명 이상 + 모두 캐릭터 선택 완료
+  const guestCount=Object.keys(players).length;
+  if(guestCount>=1){
+    document.getElementById('quickMatchWait').style.display='none';
+    setTimeout(()=>{
+      if(quickMatchMode&&gameStarted===false){
+        quickMatchMode=false;
+        hostStartGame();
+      }
+    },1200);
+  }
+}
+
 function joinByInput(){
   const code=document.getElementById('codeInput').value.trim().toUpperCase();
   if(code.length!==4){toast('방 코드는 4자리예요! (예: ABCD)');return;}
@@ -1018,6 +1132,7 @@ function startSoloWithLevels(){
 // ════════════════════════════════════
 function goLobby(){
   stopTimer(); gameOver=true;
+  clearTimeout(_qmPollTimer); quickMatchMode=false;
   hideVmsg(); hideWinBanner();
   if(lobbyPeer){try{lobbyPeer.destroy();}catch(_){}lobbyPeer=null;}
   if(peer){try{peer.destroy();}catch(_){}peer=null;}
