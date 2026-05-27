@@ -1,0 +1,40 @@
+# ── 의존성 ──────────────────────────────
+node_modules/
+.npm/
+
+# ── 빌드 출력 ────────────────────────────
+dist/
+build/
+out/
+
+# ── 환경 변수 ────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── 에디터 / OS ──────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ── 로그 ────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── 임시 파일 ────────────────────────────
+*.tmp
+*.bak
+serve.js
+
+# ── 게임 데이터 (서버에서 자동 생성) ─────────
+scores.json
+index.orig.html
+build-with-music.js
+repair-html.js

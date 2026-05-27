@@ -1,0 +1,28 @@
+{
+  "name": "water-sort-game",
+  "version": "1.0.0",
+  "private": true,
+  "description": "물 색깔 대결 — WebRTC P2P 멀티플레이어 물 분류 퍼즐 게임 (1~4인, 레벨 1→5)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev":   "node server.js",
+    "build": "node build.js",
+    "preview": "node -e \"process.env.PORT='4000'; require('./server.js')\""
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "game",
+    "water-sort",
+    "webrtc",
+    "peerjs",
+    "puzzle",
+    "multiplayer",
+    "korean"
+  ],
+  "license": "MIT",
+  "author": "",
+  "dependencies": {}
+}
