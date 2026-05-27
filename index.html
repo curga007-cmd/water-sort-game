@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>🧪 물 색깔 대결!</title>
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<!-- PeerJS 제거 → WebSocket 릴레이로 교체 -->
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 body{font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
@@ -536,9 +536,7 @@ let charMode      = ''; // 'host' | 'guest'
 // 플레이어 상태
 let myState = {lv:1,prog:0,moves:0,total:0,done:false};
 let players = {};       // idx -> {charId,em,nm,lv,prog,moves,total,done}
-let playerConns = new Map(); // idx -> conn (host)
-let connState   = new Map(); // conn -> reservedIdx | 'active' (host)
-let hostConn    = null;      // guest
+let connState   = new Map(); // guestIdx -> 'pending'|'active' (host)
 
 // 빠른 매칭
 let quickMatchMode = false;
@@ -553,81 +551,76 @@ let timerID=null, timerStart=0;
 let gameTimerStart=0; // 게임 전체 시작 시각
 
 // 로비
-let lobby = {}, peer = null, lobbyPeer = null;
+let lobby = {}, gameWS = null;
 
 // ════════════════════════════════════
 //  PeerJS
 // ════════════════════════════════════
-function mkPeer(id) {
-  return new Promise((ok,fail)=>{
-    const p = new Peer(id,{
-      host:'0.peerjs.com',port:443,secure:true,path:'/',debug:0,
-      config:{iceServers:[
-        {urls:'stun:stun.l.google.com:19302'},
-        {urls:'stun:stun1.l.google.com:19302'},
-        {urls:'stun:stun2.l.google.com:19302'},
-        {urls:'stun:stun.cloudflare.com:3478'},
-        {urls:'stun:global.stun.twilio.com:3478'},
-        // TURN 릴레이 – 모바일↔WiFi 같은 symmetric NAT 환경에서도 연결 가능
-        {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
-        {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
-        {urls:'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'},
-      ]}
-    });
-    p.on('open',()=>ok(p));
-    p.on('error',e=>fail(e));
-  });
+// ════════════════════════════════════
+//  WebSocket 릴레이
+// ════════════════════════════════════
+function wsUrl(room, role){
+  const proto = location.protocol==='https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}/ws?room=${room}&role=${role}`;
+}
+
+function wsSend(msg){
+  if(gameWS && gameWS.readyState===WebSocket.OPEN) gameWS.send(JSON.stringify(msg));
+}
+
+function handleWSMessage(event){
+  let msg;
+  try{ msg=JSON.parse(event.data); }catch{ return; }
+
+  // 서버 제어 메시지
+  switch(msg.type){
+    case'_ready': return; // 연결 확인 (무시)
+    case'_guestJoined': if(isHost) onGuestJoin(msg.idx); return;
+    case'_guestLeft':   if(isHost) onGuestLeft(msg.idx); return;
+    case'_hostLeft':
+      if(!gameOver) toast('방장과 연결이 끊어졌어요 😢');
+      setTimeout(goLobby,1500); return;
+    case'_noHost':
+      toast('방을 찾을 수 없어요 😢 코드를 다시 확인해주세요');
+      setTimeout(goLobby,1500); return;
+  }
+
+  // 게임 메시지 라우팅
+  if(isHost && msg._from!==undefined){
+    const state=connState.get(msg._from);
+    if(state==='active') onHostReceive(msg._from, msg);
+    else if(state==='pending' && msg.type==='charChoose') handleCharChoose(msg._from, msg.charId);
+  } else if(!isHost){
+    onGuestReceive(msg);
+  }
 }
 
 // ════════════════════════════════════
-//  로비 스캔
+//  방 목록 (HTTP)
 // ════════════════════════════════════
-function getLobbySlots(){
-  const d=new Date();
-  const base=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
-  const s=[];
-  for(let i=0;i<20;i++) s.push('wsort-lb-'+((base*31+i*7)%9000+1000));
-  return s;
-}
-
 let scanning=false;
 async function scanRooms(){
   if(scanning)return;
   scanning=true; lobby={};
   renderRoomList();
-  const slots=getLobbySlots();
-  let pending=slots.length;
-  let tempPeer;
-  const finish=()=>{ pending--; if(pending<=0){scanning=false;document.getElementById('refreshIcon').style.animation='none';renderRoomList();if(tempPeer)try{tempPeer.destroy();}catch(_){} } };
   try{
-    tempPeer=await mkPeer('wsort-sc-'+myId);
-    for(const slot of slots){
-      try{
-        const c=tempPeer.connect(slot,{reliable:true});
-        const t=setTimeout(()=>{try{c.close();}catch(_){}finish();},1800);
-        c.on('data',msg=>{clearTimeout(t);if(msg.type==='roomInfo'&&msg.count<msg.max){lobby[msg.roomCode]=msg;renderRoomList();}try{c.close();}catch(_){}finish();});
-        c.on('error',()=>{clearTimeout(t);finish();});
-      }catch(_){finish();}
-    }
-  }catch(_){for(let i=0;i<slots.length;i++)finish();}
+    const rooms=await fetch('/api/rooms').then(r=>r.json());
+    lobby={};
+    for(const r of rooms) if(r.count<r.max) lobby[r.code]=r;
+    renderRoomList();
+  }catch(_){}
+  scanning=false;
+  document.getElementById('refreshIcon').style.animation='none';
 }
 
-async function startLobbyPeer(){
-  const slots=getLobbySlots();
-  for(const slot of slots){
-    try{
-      lobbyPeer=await Promise.race([mkPeer(slot),new Promise((_,r)=>setTimeout(()=>r(),1500))]);
-      if(!lobbyPeer)continue;
-      lobbyPeer.on('connection',c=>{
-        c.on('open',()=>{
-          c.send({type:'roomInfo',roomCode,hostEmoji:myCharId>=0?CHARS[myCharId].em:'🐱',
-            count:Object.keys(players).length+1,max:MAX_PLAYERS});
-          c.close();
-        });
-      });
-      break;
-    }catch(_){}
-  }
+function registerRoom(){
+  fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      roomCode, emoji:myCharId>=0?CHARS[myCharId].em:'🐱',
+      name:CHARS[myCharId]?.nm||'방장',
+      count:Object.keys(players).length+1, max:MAX_PLAYERS
+    })
+  }).catch(()=>{});
 }
 
 function renderRoomList(){
@@ -636,12 +629,12 @@ function renderRoomList(){
   if(!rooms.length){el.innerHTML='<div class="no-rooms">열린 방이 없어요 😊<br>직접 방을 만들어보세요!</div>';return;}
   el.innerHTML=rooms.map(r=>`
     <div class="room-card">
-      <div class="room-avatars">${r.hostEmoji||'🐱'}</div>
+      <div class="room-avatars">${r.emoji||'🐱'}</div>
       <div class="room-info">
-        <div class="rname">${r.hostEmoji||'🐱'} 방</div>
+        <div class="rname">${r.emoji||'🐱'} ${r.name||'방장'}의 방</div>
         <div class="rcount">${r.count}/${r.max}명 입장 중</div>
       </div>
-      <button class="room-join" onclick="joinRoomByCode('${r.roomCode}')">입장 →</button>
+      <button class="room-join" onclick="joinRoomByCode('${r.code}')">입장 →</button>
     </div>`).join('');
 }
 
@@ -698,39 +691,34 @@ function createRoom(){
   showCharScreen('host');
 }
 
-async function doCreateRoom(){
+function doCreateRoom(){
   isHost=true; soloMode=false;
   roomCode=genCode(); myIdx=0;
-  players={}; playerConns.clear(); connState.clear();
+  players={}; connState.clear();
   gameStarted=false;
-  try{
-    peer=await mkPeer('wsort-'+roomCode);
-  }catch(e){toast('방 만들기 실패 😢 다시 시도해주세요');return;}
-  peer.on('connection',onGuestConnect);
-  startLobbyPeer();
-  showWaitScreen();
+  gameWS=new WebSocket(wsUrl(roomCode,'host'));
+  gameWS.onmessage=handleWSMessage;
+  gameWS.onerror=()=>{ toast('방 만들기 실패 😢 다시 시도해주세요'); goLobby(); };
+  gameWS.onclose=()=>{ if(!gameOver&&!soloMode) toast('서버 연결이 끊어졌어요 😢'); };
+  gameWS.onopen=()=>{ showWaitScreen(); };
 }
 
 // ════════════════════════════════════
 //  방 입장 (guest)
 // ════════════════════════════════════
-async function joinRoomByCode(code){
+function joinRoomByCode(code){
   isHost=false; soloMode=false;
   roomCode=code; myIdx=-1;
-  try{
-    peer=await mkPeer('wsort-guest-'+myId);
-  }catch(e){toast('접속 실패 😢 다시 시도해주세요');return;}
-  const conn=peer.connect('wsort-'+code,{reliable:true,serialization:'json'});
-  hostConn=conn;
-  let codeJoinOk=false;
-  const codeJoinTimeout=setTimeout(()=>{
-    if(!codeJoinOk){toast('연결 시간 초과 😢 코드를 다시 확인해주세요');setTimeout(goLobby,1500);}
-  },25000);
-  conn.on('open',()=>{/* wait for welcome */});
-  conn.on('data',msg=>{codeJoinOk=true;clearTimeout(codeJoinTimeout);onGuestReceive(msg);});
-  conn.on('close',()=>{clearTimeout(codeJoinTimeout);if(!gameOver)toast('방장과 연결이 끊어졌어요 😢');});
-  conn.on('error',()=>{clearTimeout(codeJoinTimeout);toast('접속 실패 😢 코드를 다시 확인하거나 잠시 후 시도해주세요');setTimeout(goLobby,1500);});
-  // welcome 메시지 받으면 charScreen으로 이동 (onGuestReceive에서 처리)
+  show('waitScreen');
+  document.getElementById('waitCode').textContent=`${code} 방에 연결 중...`;
+  document.getElementById('shareCodeBox').style.display='none';
+  document.getElementById('startBtnWrap').style.display='none';
+  document.getElementById('guestWaitMsg').style.display='none';
+  document.getElementById('quickMatchWait').style.display='none';
+  gameWS=new WebSocket(wsUrl(code,'guest'));
+  gameWS.onmessage=handleWSMessage;
+  gameWS.onerror=()=>{ toast('접속 실패 😢 코드를 다시 확인해주세요'); setTimeout(goLobby,1500); };
+  gameWS.onclose=()=>{ if(!gameOver) toast('방장과 연결이 끊어졌어요 😢'); };
 }
 
 function doJoinRoom(){
@@ -740,64 +728,37 @@ function doJoinRoom(){
 }
 
 // ════════════════════════════════════
-//  Host 연결 처리
+//  Host 연결 처리 (WebSocket 릴레이)
 // ════════════════════════════════════
-function onGuestConnect(conn){
+function onGuestJoin(guestIdx){
   if(Object.keys(players).length+connState.size>=MAX_PLAYERS-1){
-    conn.on('open',()=>{conn.send({type:'full'});setTimeout(()=>conn.close(),300);});
-    return;
+    wsSend({type:'full',_to:guestIdx}); return;
   }
-  const reservedIdx=getNextReservedIdx();
-  connState.set(conn,reservedIdx);
-
-  conn.on('open',()=>{
-    const taken=getTakenChars();
-    conn.send({type:'welcome',yourIdx:reservedIdx,playerList:buildPlayerList(),takenChars:taken});
-  });
-
-  conn.on('data',msg=>{
-    const state=connState.get(conn);
-    if(state!=='active'){
-      // 아직 캐릭터 선택 대기 중
-      if(msg.type==='charChoose') handleCharChoose(conn,state,msg.charId);
-    } else {
-      onHostReceive(conn,msg);
-    }
-  });
-
-  conn.on('close',()=>{
-    const state=connState.get(conn);
-    connState.delete(conn);
-    if(state==='active'){
-      const idx=getIdxByConn(conn);
-      if(idx!==-1){
-        delete players[idx]; playerConns.delete(idx);
-        broadcastAll({type:'playerLeft',idx});
-        renderWaitPlayers(); updateStartBtn();
-      }
-    }
-  });
+  connState.set(guestIdx,'pending');
+  const taken=getTakenChars();
+  wsSend({type:'welcome',yourIdx:guestIdx,playerList:buildPlayerList(),takenChars:taken,_to:guestIdx});
 }
 
-function getNextReservedIdx(){
-  const used=new Set([...Object.keys(players).map(Number),...connState.values()]);
-  for(let i=1;i<MAX_PLAYERS;i++) if(!used.has(i)) return i;
-  return MAX_PLAYERS;
+function onGuestLeft(guestIdx){
+  const state=connState.get(guestIdx);
+  connState.delete(guestIdx);
+  if(state==='active'){
+    delete players[guestIdx];
+    wsSend({type:'playerLeft',idx:guestIdx});
+    renderWaitPlayers(); updateStartBtn();
+  }
 }
 
-function handleCharChoose(conn,reservedIdx,charId){
+function handleCharChoose(guestIdx,charId){
   const taken=getTakenChars();
   if(taken.includes(charId)){
-    conn.send({type:'charTaken'});
-    return;
+    wsSend({type:'charTaken',_to:guestIdx}); return;
   }
   const ch=CHARS[charId];
-  players[reservedIdx]={charId,em:ch.em,nm:ch.nm,idx:reservedIdx,
+  players[guestIdx]={charId,em:ch.em,nm:ch.nm,idx:guestIdx,
     lv:1,prog:0,moves:0,total:0,done:false};
-  playerConns.set(reservedIdx,conn);
-  connState.set(conn,'active');
-
-  broadcastExcept(reservedIdx,{type:'playerJoined',idx:reservedIdx,charId});
+  connState.set(guestIdx,'active');
+  wsSend({type:'playerJoined',idx:guestIdx,charId}); // 서버가 전체 브로드캐스트
   renderWaitPlayers(); updateStartBtn();
   tryQuickMatchAutoStart();
 }
@@ -813,27 +774,26 @@ function buildPlayerList(){
 }
 
 // ════════════════════════════════════
-//  Host 데이터 수신
+//  Host 데이터 수신 (WebSocket)
 // ════════════════════════════════════
-function onHostReceive(conn,msg){
-  const idx=getIdxByConn(conn);
+function onHostReceive(guestIdx,msg){
   switch(msg.type){
     case'state':
-      if(players[idx]){players[idx]={...players[idx],...msg.state};if(gameStarted)renderAllProgress();}
-      broadcastExcept(idx,{type:'playerState',idx,state:msg.state});
+      if(players[guestIdx]){players[guestIdx]={...players[guestIdx],...msg.state};if(gameStarted)renderAllProgress();}
+      wsSend({type:'playerState',idx:guestIdx,state:msg.state});
       break;
     case'lvDone':
-      if(players[idx])players[idx].lv=msg.lv+1;
-      broadcastExcept(idx,{type:'playerLvDone',idx,lv:msg.lv});
-      toast(`${players[idx]?.em||''}가 레벨 ${msg.lv} 클리어! 🎉`);
+      if(players[guestIdx])players[guestIdx].lv=msg.lv+1;
+      wsSend({type:'playerLvDone',idx:guestIdx,lv:msg.lv});
+      toast(`${players[guestIdx]?.em||''}가 레벨 ${msg.lv} 클리어! 🎉`);
       break;
     case'allDone':
-      if(players[idx]){players[idx].done=true;players[idx].total=msg.total;}
-      broadcastExcept(idx,{type:'playerAllDone',idx,total:msg.total});
-      if(!gameOver)toast(`${players[idx]?.em||''}가 먼저 완성했어요!`);
+      if(players[guestIdx]){players[guestIdx].done=true;players[guestIdx].total=msg.total;}
+      wsSend({type:'playerAllDone',idx:guestIdx,total:msg.total});
+      if(!gameOver)toast(`${players[guestIdx]?.em||''}가 먼저 완성했어요!`);
       break;
     case'winnerMsg':
-      onHostReceiveWinnerMsg(conn,msg);
+      onHostReceiveWinnerMsg(guestIdx,msg);
       break;
   }
 }
@@ -868,6 +828,7 @@ function onGuestReceive(msg){
       break;
 
     case'playerJoined':{
+      if(msg.idx===myIdx) break; // 자신의 입장 브로드캐스트는 무시
       const ch=CHARS[msg.charId]||CHARS[0];
       players[msg.idx]={charId:msg.charId,em:ch.em,nm:ch.nm,idx:msg.idx,
         lv:1,prog:0,moves:0,total:0,done:false};
@@ -889,15 +850,18 @@ function onGuestReceive(msg){
       break;
 
     case'playerState':
+      if(msg.idx===myIdx) break; // 자신의 상태는 무시
       if(players[msg.idx]){players[msg.idx]={...players[msg.idx],...msg.state};if(gameStarted)renderAllProgress();}
       break;
 
     case'playerLvDone':
+      if(msg.idx===myIdx) break;
       if(players[msg.idx])players[msg.idx].lv=msg.lv+1;
       toast(`${players[msg.idx]?.em||''}가 레벨 ${msg.lv} 클리어! 🎉`);
       break;
 
     case'playerAllDone':
+      if(msg.idx===myIdx) break;
       if(players[msg.idx]){players[msg.idx].done=true;players[msg.idx].total=msg.total;}
       if(!gameOver){gameOver=true;stopTimer();showResult();}
       break;
@@ -920,10 +884,10 @@ function onGuestReceive(msg){
 // ════════════════════════════════════
 //  전송 헬퍼
 // ════════════════════════════════════
-function broadcastAll(msg){playerConns.forEach(c=>{if(c.open)c.send(msg);});}
-function broadcastExcept(skip,msg){playerConns.forEach((c,i)=>{if(i!==skip&&c.open)c.send(msg);});}
-function sendToHost(msg){if(hostConn&&hostConn.open)hostConn.send(msg);}
-function getIdxByConn(conn){for(const[i,c]of playerConns)if(c===conn)return i;return -1;}
+// WebSocket 릴레이: 서버가 라우팅을 처리
+function broadcastAll(msg){ wsSend(msg); }
+function broadcastExcept(_skip,msg){ wsSend(msg); } // 클라이언트 측 self-filter로 처리
+function sendToHost(msg){ if(!soloMode) wsSend(msg); }
 
 // ════════════════════════════════════
 //  대기실 UI
@@ -941,24 +905,21 @@ function showWaitScreen(){
   } else {
     box.style.display='none';
   }
-  if(isHost){ selectedLvs=[1,2,3,4,5]; renderLvSelGrid('waitLvGrid',true); }
+  if(isHost){
+    selectedLvs=[1,2,3,4,5]; renderLvSelGrid('waitLvGrid',true);
+    registerRoom(); // 서버 방 목록에 등록
+  }
   renderWaitPlayers(); updateStartBtn();
 }
 
 // ════════════════════════════════════
-//  빠른 매칭
+//  빠른 매칭 (WebSocket 릴레이)
 // ════════════════════════════════════
 async function quickMatch(){
   quickMatchMode=true;
-  isHost=true; soloMode=false; players={}; playerConns.clear(); connState.clear();
-  roomCode=genCode(); myIdx=0; gameStarted=false;
-  try{
-    peer=await mkPeer('wsort-'+roomCode);
-  }catch(e){toast('연결 오류 😢 다시 시도해주세요');quickMatchMode=false;return;}
-  peer.on('connection',onGuestConnect);
-  startLobbyPeer();
+  soloMode=false; players={}; connState.clear();
+  roomCode=genCode(); gameStarted=false;
 
-  // 서버에 매칭 등록
   show('waitScreen');
   document.getElementById('shareCodeBox').style.display='none';
   document.getElementById('waitCode').textContent='';
@@ -974,43 +935,33 @@ async function quickMatch(){
   if(!res){toast('매칭 서버 오류 😢');cancelQuickMatch();return;}
 
   if(res.matched){
-    // 상대방이 이미 대기 중 → 내가 게스트로 접속
+    // 상대방이 이미 대기 중 → 내가 게스트로 WS 연결
     const connectTo=res.connectTo;
     quickMatchMode=false;
-    if(peer){try{peer.destroy();}catch(_){}}peer=null;
     isHost=false; myIdx=-1; myCharId=0; takenCharIds=new Set();
-    try{
-      peer=await mkPeer('wsort-guest-'+myId);
-    }catch(e){toast('연결 오류 😢');goLobby();return;}
 
-    // 매칭 완료 UI 업데이트
     const subEl=document.querySelector('#quickMatchWait .matching-sub');
     if(subEl) subEl.textContent='상대방을 찾았어요! 연결 중...';
 
-    const conn=peer.connect('wsort-'+connectTo,{reliable:true,serialization:'json'});
-    hostConn=conn;
-
-    // 30초 안에 welcome 못 받으면 타임아웃
-    let connOk=false;
-    const connTimeout=setTimeout(()=>{
-      if(!connOk){toast('연결 시간 초과 😢 다시 시도해주세요');setTimeout(goLobby,1500);}
-    },30000);
-
-    conn.on('open',()=>{
-      const subEl2=document.querySelector('#quickMatchWait .matching-sub');
-      if(subEl2) subEl2.textContent='연결됐어요! 캐릭터 선택 준비 중...';
-    });
-    conn.on('data',msg=>{connOk=true;clearTimeout(connTimeout);onGuestReceive(msg);});
-    conn.on('close',()=>{clearTimeout(connTimeout);if(!gameOver)toast('상대방과 연결이 끊어졌어요 😢');});
-    conn.on('error',e=>{clearTimeout(connTimeout);toast('접속 실패 😢 다시 시도해주세요');setTimeout(goLobby,1500);});
-
-    // welcome 받으면 charScreen으로 이동
     roomCode=connectTo;
-    document.getElementById('waitCode').textContent=`매칭 완료! 연결 중...`;
-  }
-  // matched=false: 내가 호스트로 대기, 상대방이 연결해올 때까지 대기
-  // 65초 후에도 아무도 안 오면 안내
-  if(!res.matched){
+    document.getElementById('waitCode').textContent='매칭 완료! 연결 중...';
+
+    gameWS=new WebSocket(wsUrl(connectTo,'guest'));
+    gameWS.onopen=()=>{
+      const sub2=document.querySelector('#quickMatchWait .matching-sub');
+      if(sub2) sub2.textContent='연결됐어요! 잠깐만요...';
+    };
+    gameWS.onmessage=handleWSMessage;
+    gameWS.onerror=()=>{ toast('접속 실패 😢 다시 시도해주세요'); setTimeout(goLobby,1500); };
+    gameWS.onclose=()=>{ if(!gameOver) toast('상대방과 연결이 끊어졌어요 😢'); };
+  } else {
+    // 내가 호스트로 대기 → WS 연결 열기
+    isHost=true; myIdx=0;
+    gameWS=new WebSocket(wsUrl(roomCode,'host'));
+    gameWS.onmessage=handleWSMessage;
+    gameWS.onerror=()=>{ toast('매칭 서버 연결 오류 😢'); cancelQuickMatch(); };
+    gameWS.onclose=()=>{ if(!gameOver&&!soloMode) toast('서버 연결이 끊어졌어요 😢'); };
+
     _qmPollTimer=setTimeout(()=>{
       if(quickMatchMode&&Object.keys(players).length===0){
         toast('상대방을 찾지 못했어요 😢 다시 시도해주세요');
@@ -1027,6 +978,7 @@ function cancelQuickMatch(){
       body:JSON.stringify({roomCode,action:'cancel'})}).catch(()=>{});
   }
   quickMatchMode=false;
+  if(gameWS){try{gameWS.close();}catch(_){}gameWS=null;}
   goLobby();
 }
 
@@ -1168,9 +1120,8 @@ function goLobby(){
   stopTimer(); gameOver=true;
   clearTimeout(_qmPollTimer); quickMatchMode=false;
   hideVmsg(); hideWinBanner();
-  if(lobbyPeer){try{lobbyPeer.destroy();}catch(_){}lobbyPeer=null;}
-  if(peer){try{peer.destroy();}catch(_){}peer=null;}
-  hostConn=null; playerConns.clear(); connState.clear();
+  if(gameWS){try{gameWS.close();}catch(_){}gameWS=null;}
+  connState.clear(); players={};
   isHost=false; soloMode=false; gameStarted=false; gameOver=false;
   myCharId=-1; takenCharIds=new Set(); lobby={}; selectedLvs=[1,2,3,4,5];
   show('lobbyScreen');
@@ -1600,10 +1551,9 @@ function hideWinBanner(){
 }
 
 // 호스트가 winnerMsg 받으면 relay
-function onHostReceiveWinnerMsg(conn,msg){
-  const idx=getIdxByConn(conn);
-  // 보낸 사람 빼고 전부에게 relay
-  broadcastExcept(idx,msg);
+function onHostReceiveWinnerMsg(guestIdx,msg){
+  // 다른 게스트들에게 relay (서버가 전체 브로드캐스트, 클라이언트 self-filter)
+  wsSend({type:'winnerMsg',em:msg.em,name:msg.name,message:msg.message});
   showWinBanner(msg.em,msg.name,msg.message);
 }
 

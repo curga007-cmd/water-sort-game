@@ -1,8 +1,9 @@
 'use strict';
 
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http      = require('http');
+const fs        = require('fs');
+const path      = require('path');
+const WebSocket = require('ws');
 
 const PORT        = process.env.PORT || 3000;
 const BASE_DIR    = __dirname;
@@ -24,14 +25,97 @@ const MIME = {
 };
 
 // ── 빠른 매칭 큐 (메모리) ──────────────────────────────────────
-let matchQueue = null; // { roomCode, ts }
+let matchQueue = null;
 let matchTimer  = null;
-
 function clearMatch() {
   matchQueue = null;
   clearTimeout(matchTimer);
   matchTimer = null;
 }
+
+// ── 열린 방 목록 (HTTP 등록, WS 종료 시 삭제) ────────────────────
+const openRooms = new Map(); // roomCode → {code, emoji, name, count, max, ts}
+
+// ── WebSocket 게임 릴레이 ────────────────────────────────────────
+// roomCode → { hostWs, guests: Map<idx, ws>, nextIdx }
+const gameRooms = new Map();
+const wss       = new WebSocket.Server({ noServer: true });
+
+wss.on('connection', (ws, req) => {
+  const url  = new URL(req.url, 'http://localhost');
+  const room = url.searchParams.get('room');
+  const role = url.searchParams.get('role') || 'guest';
+  if (!room) { ws.close(1008, 'no room'); return; }
+
+  let roomData = gameRooms.get(room);
+  let myIdx    = 0;
+
+  if (role === 'host') {
+    if (!roomData) {
+      roomData = { hostWs: ws, guests: new Map(), nextIdx: 1 };
+      gameRooms.set(room, roomData);
+    } else {
+      roomData.hostWs = ws;
+    }
+    ws.send(JSON.stringify({ type: '_ready', idx: 0 }));
+  } else {
+    // guest
+    if (!roomData || !roomData.hostWs || roomData.hostWs.readyState !== WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: '_noHost' }));
+      ws.close(); return;
+    }
+    myIdx = roomData.nextIdx++;
+    roomData.guests.set(myIdx, ws);
+    ws.send(JSON.stringify({ type: '_ready', idx: myIdx }));
+    // 호스트에게 알림
+    roomData.hostWs.send(JSON.stringify({ type: '_guestJoined', idx: myIdx }));
+  }
+
+  ws.on('message', (rawData) => {
+    let msg;
+    try { msg = JSON.parse(rawData); } catch { return; }
+    if (!roomData) return;
+
+    if (role === 'host') {
+      // _to 있으면 특정 게스트에게만, 없으면 전체 브로드캐스트
+      const target = msg._to;
+      if (target !== undefined) {
+        const gws = roomData.guests.get(Number(target));
+        if (gws && gws.readyState === WebSocket.OPEN) gws.send(rawData.toString());
+      } else {
+        roomData.guests.forEach(gws => {
+          if (gws.readyState === WebSocket.OPEN) gws.send(rawData.toString());
+        });
+      }
+    } else {
+      // 게스트 → 호스트 (서버가 _from 추가)
+      if (roomData.hostWs && roomData.hostWs.readyState === WebSocket.OPEN) {
+        const fwd = Object.assign({}, msg, { _from: myIdx });
+        roomData.hostWs.send(JSON.stringify(fwd));
+      }
+    }
+  });
+
+  ws.on('close', () => {
+    if (!roomData) return;
+    if (role === 'host') {
+      // 호스트 떠남 → 모든 게스트에게 알림
+      roomData.guests.forEach(gws => {
+        if (gws.readyState === WebSocket.OPEN)
+          gws.send(JSON.stringify({ type: '_hostLeft' }));
+      });
+      gameRooms.delete(room);
+      openRooms.delete(room);
+    } else {
+      // 게스트 떠남 → 호스트에게 알림
+      roomData.guests.delete(myIdx);
+      if (roomData.hostWs && roomData.hostWs.readyState === WebSocket.OPEN)
+        roomData.hostWs.send(JSON.stringify({ type: '_guestLeft', idx: myIdx }));
+    }
+  });
+
+  ws.on('error', () => {});
+});
 
 // ── 점수 파일 ──────────────────────────────────────────────────
 function readScores() {
@@ -68,8 +152,34 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+
+  // ── 열린 방 목록 API ────────────────────────────────────────
+  if (urlPath === '/api/rooms') {
+    if (req.method === 'GET') {
+      const now = Date.now();
+      for (const [code, r] of openRooms) {
+        if (now - r.ts > 300000) openRooms.delete(code); // 5분 만료
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(Array.from(openRooms.values()).slice(0, 20)));
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', d => { body += d; });
+      req.on('end', () => {
+        try {
+          const { roomCode, emoji, name, count, max } = JSON.parse(body);
+          if (roomCode) openRooms.set(roomCode, { code: roomCode, emoji, name, count, max, ts: Date.now() });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch { res.writeHead(400); res.end('error'); }
+      });
+      return;
+    }
+    res.writeHead(405); res.end(); return;
+  }
 
   // ── 빠른 매칭 API ────────────────────────────────────────────
   if (urlPath === '/api/match') {
@@ -85,15 +195,12 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({ ok: true }));
             return;
           }
-          // 매칭 시도
           if (matchQueue && Date.now() - matchQueue.ts < 60000) {
-            // 대기자 있음 → 매칭!
             const connectTo = matchQueue.roomCode;
             clearMatch();
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ matched: true, connectTo }));
           } else {
-            // 대기자 없음 → 큐 등록
             clearMatch();
             matchQueue = { roomCode, ts: Date.now() };
             matchTimer = setTimeout(clearMatch, 60000);
@@ -162,6 +269,16 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// ── WebSocket 업그레이드 처리 ───────────────────────────────────
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/ws') {
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+  } else {
+    socket.destroy();
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`\n🧪  물 색깔 대결!  서버 실행 중`);
   console.log(`    http://localhost:${PORT}\n`);
@@ -169,7 +286,7 @@ server.listen(PORT, () => {
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`❌  포트 ${PORT} 가 이미 사용 중이에요. PORT 환경변수를 바꿔보세요.`);
+    console.error(`❌  포트 ${PORT} 가 이미 사용 중이에요.`);
   } else {
     console.error('서버 오류:', err.message);
   }
