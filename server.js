@@ -239,6 +239,7 @@ const server = http.createServer((req, res) => {
             time:    String(entry.time    || '').slice(0, 8),
             message: String(entry.message || '').slice(0, 10),
             levels:  String(entry.levels  || '').slice(0, 20),
+            mode:    entry.mode === 'multi' ? 'multi' : 'solo',
             date:    new Date().toISOString().slice(0, 10),
           };
           scores.push(newEntry);

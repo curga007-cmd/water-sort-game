@@ -346,7 +346,7 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
 
   <div class="divider"><span>나만의 방</span></div>
   <button class="btn btn-purple" onclick="quickMatch()">⚡ 빠른 매칭 (아무나와 대결!)</button>
-  <button class="btn btn-pink"   onclick="createRoom()">🏠 방 만들기 (코드로 초대)</button>
+  <button class="btn btn-pink"   onclick="createRoom()">🏠 방 만들기</button>
   <button class="btn btn-yellow" onclick="startSolo()">🎮 혼자 하기</button>
   <button class="btn btn-ghost"  onclick="showHall()" style="margin-top:8px;">🏆 명예의 전당</button>
 </div>
@@ -1473,7 +1473,7 @@ function fetchHall(){
       <tr>
         <td class="hall-rank ${rankClass[i]||''}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'위'}</td>
         <td class="hall-em">${s.em||'🐱'}</td>
-        <td class="hall-name">${s.name||'익명'}<br><span style="color:rgba(255,255,255,.45);font-size:.7em;">${s.date||''} · ${s.levels||''}</span></td>
+        <td class="hall-name">${s.name||'익명'}<br><span style="color:rgba(255,255,255,.45);font-size:.7em;">${s.date||''} · ${s.levels||''}</span><br><span style="font-size:.72em;padding:1px 6px;border-radius:8px;font-weight:700;${s.mode==='multi'?'background:rgba(99,102,241,.45);color:#c7d2fe;':'background:rgba(16,185,129,.35);color:#6ee7b7;'}">${s.mode==='multi'?'⚔️ 대결':'🎮 혼자'}</span></td>
         <td class="hall-score">${(s.score||0).toLocaleString()}</td>
         <td class="hall-time">${s.time||''}</td>
         <td class="hall-msg">${s.message||''}</td>
@@ -1532,6 +1532,7 @@ function registerScore(message){
     em:myCh.em, name:myCh.nm,
     score, time:myState.timeStr||'',
     message, levels,
+    mode: soloMode ? 'solo' : 'multi',
   };
   fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(payload)})
