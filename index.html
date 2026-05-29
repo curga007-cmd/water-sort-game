@@ -298,6 +298,11 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
 }
 #musicBtn:active{transform:scale(.9);}
 #musicBtn.muted{opacity:.55;}
+@keyframes music-pulse{
+  0%,100%{box-shadow:0 3px 10px rgba(0,0,0,.3),0 0 0 0 rgba(255,255,255,.55);}
+  50%{box-shadow:0 3px 10px rgba(0,0,0,.3),0 0 0 9px rgba(255,255,255,0);}
+}
+#musicBtn.music-hint{animation:music-pulse 1.6s ease-in-out infinite;}
 </style>
 </head>
 <body>
@@ -1603,42 +1608,42 @@ const BGM_TRACKS = [
   function playSong(idx){
     audio.src=BGM_TRACKS[idx].src;
     audio.volume=0.42;
-    audio.load();
-    audio.play().catch(function(){/* autoplay 정책으로 인해 대기 */});
+    // audio.load() 제거 — iOS에서 play() 직전 load() 호출 시 재생이 차단됨
+    audio.play().catch(function(){});
   }
   function startBGM(){
     if(started)return; started=true;
+    var b=document.getElementById('musicBtn');
+    if(b) b.classList.remove('music-hint'); // 펄스 힌트 제거
     order=shuffle(BGM_TRACKS.map(function(_,i){return i;}));
     cur=0;
     playSong(order[0]);
   }
   audio.addEventListener('ended',nextSong);
 
-  // 페이지 로드 즉시 재생 시도; 브라우저가 차단하면 첫 클릭 때 시작 (폴백)
+  // 페이지 로드 즉시 재생 시도; 브라우저가 차단하면 첫 상호작용 때 시작 (폴백)
   (function tryAutoplay(){
     order=shuffle(BGM_TRACKS.map(function(_,i){return i;}));
     cur=0;
     audio.src=BGM_TRACKS[order[0]].src;
     audio.volume=0.42;
-    audio.load();
+    // load() 없이 바로 play() 시도 — iOS 호환성 향상
     audio.play().then(function(){ started=true; }).catch(function(){
-      function onFirst(){
-        startBGM();
-        document.removeEventListener('click',onFirst,true);
-        document.removeEventListener('touchend',onFirst,true);
-      }
-      document.addEventListener('click',onFirst,true);
-      document.addEventListener('touchend',onFirst,true);
+      // 버튼에 펄스 힌트 표시 (음악이 아직 시작 안 됐음을 알림)
+      var b=document.getElementById('musicBtn');
+      if(b) b.classList.add('music-hint');
+      // 리스너를 제거하지 않음 → 어떤 상호작용이든 음악 시작 재시도 가능
+      document.addEventListener('click',    startBGM, true);
+      document.addEventListener('touchstart',startBGM, true); // touchend→touchstart: 더 즉각적
     });
   })();
 
   // 음악 버튼
   var btn=document.getElementById('musicBtn');
   if(btn){
-    btn.addEventListener('click',function(e){
+    btn.addEventListener('click',function(){
       if(!started){
-        startBGM();
-        // onFirst 도 동시에 실행되지만 started 가드로 중복 방지
+        startBGM(); // 버튼 클릭도 상호작용이므로 바로 시작
       } else {
         muted=!muted; audio.muted=muted;
         btn.textContent=muted?'🔇':'🎵';
