@@ -117,12 +117,38 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => {});
 });
 
-// ── 점수 파일 ──────────────────────────────────────────────────
-function readScores() {
+// ── 점수 저장소 ────────────────────────────────────────────────
+// UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN 환경변수가 있으면
+// Upstash Redis(클라우드)를 사용, 없으면 로컬 파일 fallback
+async function readScores() {
+  if (process.env.UPSTASH_REDIS_REST_URL) {
+    try {
+      const res = await fetch(
+        `${process.env.UPSTASH_REDIS_REST_URL}/get/scores`,
+        { headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` } }
+      );
+      const json = await res.json();
+      return json.result ? JSON.parse(json.result) : [];
+    } catch (_) { return []; }
+  }
   try { return JSON.parse(fs.readFileSync(SCORES_FILE, 'utf8')); }
   catch (_) { return []; }
 }
-function writeScores(arr) {
+
+async function writeScores(arr) {
+  if (process.env.UPSTASH_REDIS_REST_URL) {
+    try {
+      await fetch(process.env.UPSTASH_REDIS_REST_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(['SET', 'scores', JSON.stringify(arr)]),
+      });
+    } catch (_) {}
+    return;
+  }
   try { fs.writeFileSync(SCORES_FILE, JSON.stringify(arr), 'utf8'); }
   catch (_) {}
 }
@@ -218,18 +244,19 @@ const server = http.createServer((req, res) => {
   // ── 점수 API ──────────────────────────────────────────────────
   if (urlPath === '/api/scores') {
     if (req.method === 'GET') {
-      const scores = readScores().slice(0, 10);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(scores));
+      readScores().then(scores => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(scores.slice(0, 10)));
+      }).catch(() => { res.writeHead(500); res.end('[]'); });
       return;
     }
     if (req.method === 'POST') {
       let body = '';
       req.on('data', d => { body += d; });
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const entry = JSON.parse(body);
-          const scores = readScores();
+          const scores = await readScores();
           const ts = Date.now();
           const newEntry = {
             ts,
@@ -245,7 +272,7 @@ const server = http.createServer((req, res) => {
           scores.push(newEntry);
           scores.sort((a, b) => b.score - a.score);
           const top100 = scores.slice(0, 100);
-          writeScores(top100);
+          await writeScores(top100);
           const rank = top100.findIndex(s => s.ts === ts) + 1;
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ rank, top10: top100.slice(0, 10) }));
