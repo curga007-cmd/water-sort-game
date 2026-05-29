@@ -248,9 +248,9 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
 .hall-rank.t3{color:#f97316;}
 .hall-em{font-size:1.1em;text-align:center;}
 .hall-name{font-weight:700;font-size:.82em;}
-.hall-score{font-weight:700;color:#86efac;font-size:.82em;text-align:right;}
-.hall-time{color:rgba(255,255,255,.6);font-size:.72em;text-align:right;}
-.hall-msg{color:#fde68a;font-style:italic;font-size:.72em;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hall-score{font-weight:700;color:#86efac;font-size:.82em;text-align:right;white-space:nowrap;}
+.hall-time{color:rgba(255,255,255,.5);font-size:.68em;text-align:right;white-space:nowrap;}
+.hall-msg{color:#fde68a;font-style:italic;font-size:.78em;word-break:break-all;line-height:1.4;}
 .hall-empty{text-align:center;color:rgba(255,255,255,.45);font-size:.88em;padding:28px 0;}
 .my-rank-card{background:rgba(253,230,138,.22);border:2px solid #fde68a;border-radius:14px;
   padding:12px 16px;text-align:center;color:#fff;margin:10px 0;font-size:.9em;}
@@ -469,13 +469,12 @@ h1{font-size:1.85em;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.2);
           <th class="hall-rank">#</th>
           <th class="hall-em">캐</th>
           <th>이름</th>
-          <th>점수</th>
-          <th>시간</th>
-          <th>한마디</th>
+          <th style="text-align:right;">점수·시간</th>
+          <th style="text-align:left;padding-left:8px;">한마디</th>
         </tr>
       </thead>
       <tbody id="hallBody">
-        <tr><td colspan="6" class="hall-empty">불러오는 중...</td></tr>
+        <tr><td colspan="5" class="hall-empty">불러오는 중...</td></tr>
       </tbody>
     </table>
   </div>
@@ -1462,10 +1461,10 @@ function showHall(){
 
 function fetchHall(){
   const tbody=document.getElementById('hallBody');
-  tbody.innerHTML='<tr><td colspan="6" class="hall-empty">불러오는 중...</td></tr>';
+  tbody.innerHTML='<tr><td colspan="5" class="hall-empty">불러오는 중...</td></tr>';
   fetch('/api/scores').then(r=>r.json()).then(data=>{
     if(!data||!data.length){
-      tbody.innerHTML='<tr><td colspan="6" class="hall-empty">아직 기록이 없어요 🥹<br>첫 번째 기록을 남겨보세요!</td></tr>';
+      tbody.innerHTML='<tr><td colspan="5" class="hall-empty">아직 기록이 없어요 🥹<br>첫 번째 기록을 남겨보세요!</td></tr>';
       return;
     }
     const rankClass=['t1','t2','t3'];
@@ -1474,12 +1473,14 @@ function fetchHall(){
         <td class="hall-rank ${rankClass[i]||''}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'위'}</td>
         <td class="hall-em">${s.em||'🐱'}</td>
         <td class="hall-name">${s.name||'익명'}<br><span style="color:rgba(255,255,255,.45);font-size:.7em;">${s.date||''} · ${s.levels||''}</span><br><span style="font-size:.72em;padding:1px 6px;border-radius:8px;font-weight:700;${s.mode==='multi'?'background:rgba(99,102,241,.45);color:#c7d2fe;':'background:rgba(16,185,129,.35);color:#6ee7b7;'}">${s.mode==='multi'?'⚔️ 대결':'🎮 혼자'}</span></td>
-        <td class="hall-score">${(s.score||0).toLocaleString()}</td>
-        <td class="hall-time">${s.time||''}</td>
-        <td class="hall-msg">${s.message||''}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <div class="hall-score">${(s.score||0).toLocaleString()}</div>
+          <div class="hall-time">${s.time||''}</div>
+        </td>
+        <td class="hall-msg" style="padding-left:8px;">${s.message||'—'}</td>
       </tr>`).join('');
   }).catch(()=>{
-    tbody.innerHTML='<tr><td colspan="6" class="hall-empty">불러오기 실패 😢</td></tr>';
+    tbody.innerHTML='<tr><td colspan="5" class="hall-empty">불러오기 실패 😢</td></tr>';
   });
 }
 
