@@ -515,7 +515,7 @@ const TUBE_COLORS = [
   {c:'#FFFFFF',d:'#BBBBBB'},  // 9.  흰색  (White  — 연두 대체)
   {c:'#007777',d:'#005555'},  // 10. 청록  (Dark Teal)
   {c:'#AA5500',d:'#773300'},  // 11. 갈색  (Brown)
-  {c:'#333333',d:'#111111'},  // 12. 검정  (Black  — 라벤더 대체)
+  {c:'#88EE00',d:'#55AA00'},  // 12. 연두  (Lime — 검정 대체, 형광 연두로 명확 구분)
 ];
 
 // 15가지 캐릭터
@@ -1245,7 +1245,7 @@ function render(){
       const layer=document.createElement('div');
       layer.className='wlayer';
       layer.style.cssText=`bottom:${i*pct}%;height:${pct}%;
-        background:linear-gradient(135deg,${col.d} 0%,${col.c} 40%,${col.c} 60%,${col.d} 100%);
+        background:${col.c};
         border-radius:${i===0?'0 0 48% 48%':'0'};`;
       const shine=document.createElement('div'); shine.className='shine';
       layer.appendChild(shine); body.appendChild(layer);
@@ -1623,9 +1623,10 @@ const BGM_TRACKS = [
     if(started)return; started=true;
     var b=document.getElementById('musicBtn');
     if(b) b.classList.remove('music-hint');
-    // tryAutoplay가 이미 src·order 설정 완료 → load() 없이 play() 직호출
-    // load()를 거치면 iOS 유저 제스처 허용 시간이 만료될 수 있어 재생 실패
-    audio.play().catch(function(){});
+    // 유저 제스처 컨텍스트 안에서 src 재설정 + load() + play() — iOS 최적 패턴
+    order=shuffle(BGM_TRACKS.map(function(_,i){return i;}));
+    cur=0;
+    playSong(order[0]);
   }
   audio.addEventListener('ended',nextSong);
 
