@@ -504,18 +504,18 @@ const DIFF = {
 };
 
 const TUBE_COLORS = [
-  {c:'#FF0000',d:'#CC0000'},  // 1. 빨강   (Red)
-  {c:'#FFE000',d:'#BBAA00'},  // 2. 노랑   (Yellow)
-  {c:'#0044FF',d:'#0022BB'},  // 3. 파랑   (Blue)
-  {c:'#00CC00',d:'#008800'},  // 4. 초록   (Green)
-  {c:'#FF8800',d:'#CC5500'},  // 5. 주황   (Orange)
-  {c:'#AA00EE',d:'#7700AA'},  // 6. 보라   (Purple)
-  {c:'#FF0099',d:'#CC0066'},  // 7. 분홍   (Hot Pink)
-  {c:'#00DDFF',d:'#0099BB'},  // 8. 하늘   (Cyan — 파랑보다 밝아 확실히 구분)
-  {c:'#88EE00',d:'#55AA00'},  // 9. 연두   (Lime — 노랑·초록과 명확히 다른 형광 연두)
-  {c:'#007777',d:'#005555'},  // 10. 청록  (Dark Teal — 짙은 청록, 하늘·초록과 구분)
+  {c:'#FF0000',d:'#CC0000'},  // 1.  빨강  (Red)
+  {c:'#FFE000',d:'#BBAA00'},  // 2.  노랑  (Yellow)
+  {c:'#0044FF',d:'#0022BB'},  // 3.  파랑  (Blue)
+  {c:'#00CC00',d:'#008800'},  // 4.  초록  (Green)
+  {c:'#FF8800',d:'#CC5500'},  // 5.  주황  (Orange)
+  {c:'#AA00EE',d:'#7700AA'},  // 6.  보라  (Purple)
+  {c:'#FF0099',d:'#CC0066'},  // 7.  분홍  (Hot Pink)
+  {c:'#00DDFF',d:'#0099BB'},  // 8.  하늘  (Cyan)
+  {c:'#FFFFFF',d:'#BBBBBB'},  // 9.  흰색  (White  — 연두 대체)
+  {c:'#007777',d:'#005555'},  // 10. 청록  (Dark Teal)
   {c:'#AA5500',d:'#773300'},  // 11. 갈색  (Brown)
-  {c:'#CCAAFF',d:'#9977CC'},  // 12. 라벤더(Lavender — 연한 보라, 보라·분홍과 구분)
+  {c:'#333333',d:'#111111'},  // 12. 검정  (Black  — 라벤더 대체)
 ];
 
 // 15가지 캐릭터
@@ -1616,16 +1616,16 @@ const BGM_TRACKS = [
   function playSong(idx){
     audio.src=BGM_TRACKS[idx].src;
     audio.volume=0.42;
-    audio.load(); // 곡 변경 시 필요 — 유저 상호작용 후이므로 iOS 차단 없음
+    audio.load(); // 곡 전환 시 — 이미 재생 중인 상태이므로 안전
     audio.play().catch(function(){});
   }
   function startBGM(){
     if(started)return; started=true;
     var b=document.getElementById('musicBtn');
-    if(b) b.classList.remove('music-hint'); // 펄스 힌트 제거
-    order=shuffle(BGM_TRACKS.map(function(_,i){return i;}));
-    cur=0;
-    playSong(order[0]);
+    if(b) b.classList.remove('music-hint');
+    // tryAutoplay가 이미 src·order 설정 완료 → load() 없이 play() 직호출
+    // load()를 거치면 iOS 유저 제스처 허용 시간이 만료될 수 있어 재생 실패
+    audio.play().catch(function(){});
   }
   audio.addEventListener('ended',nextSong);
 
