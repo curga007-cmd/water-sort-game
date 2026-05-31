@@ -504,10 +504,18 @@ const DIFF = {
 };
 
 const TUBE_COLORS = [
-  {c:'#FF2020',d:'#BB0000'},{c:'#FFE000',d:'#BBA000'},{c:'#1155FF',d:'#0033BB'},
-  {c:'#00CC33',d:'#009922'},{c:'#FF8C00',d:'#BB5500'},{c:'#CC00FF',d:'#8800BB'},
-  {c:'#FF0099',d:'#BB0066'},{c:'#00CCBB',d:'#009988'},{c:'#88EE00',d:'#55AA00'},
-  {c:'#00AAFF',d:'#0077BB'},{c:'#994400',d:'#663300'},{c:'#FF5533',d:'#BB2211'},
+  {c:'#FF0000',d:'#CC0000'},  // 1. 빨강   (Red)
+  {c:'#FFE000',d:'#BBAA00'},  // 2. 노랑   (Yellow)
+  {c:'#0044FF',d:'#0022BB'},  // 3. 파랑   (Blue)
+  {c:'#00CC00',d:'#008800'},  // 4. 초록   (Green)
+  {c:'#FF8800',d:'#CC5500'},  // 5. 주황   (Orange)
+  {c:'#AA00EE',d:'#7700AA'},  // 6. 보라   (Purple)
+  {c:'#FF0099',d:'#CC0066'},  // 7. 분홍   (Hot Pink)
+  {c:'#00DDFF',d:'#0099BB'},  // 8. 하늘   (Cyan — 파랑보다 밝아 확실히 구분)
+  {c:'#88EE00',d:'#55AA00'},  // 9. 연두   (Lime — 노랑·초록과 명확히 다른 형광 연두)
+  {c:'#007777',d:'#005555'},  // 10. 청록  (Dark Teal — 짙은 청록, 하늘·초록과 구분)
+  {c:'#AA5500',d:'#773300'},  // 11. 갈색  (Brown)
+  {c:'#CCAAFF',d:'#9977CC'},  // 12. 라벤더(Lavender — 연한 보라, 보라·분홍과 구분)
 ];
 
 // 15가지 캐릭터
@@ -1608,7 +1616,7 @@ const BGM_TRACKS = [
   function playSong(idx){
     audio.src=BGM_TRACKS[idx].src;
     audio.volume=0.42;
-    // audio.load() 제거 — iOS에서 play() 직전 load() 호출 시 재생이 차단됨
+    audio.load(); // 곡 변경 시 필요 — 유저 상호작용 후이므로 iOS 차단 없음
     audio.play().catch(function(){});
   }
   function startBGM(){
