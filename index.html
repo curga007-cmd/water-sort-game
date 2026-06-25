@@ -1610,23 +1610,27 @@ const BGM_TRACKS = [
   }
   function nextSong(){
     cur=(cur+1)%order.length;
-    if(cur===0) order=shuffle(order); // 모두 재생하면 다시 셔플
-    playSong(order[cur]);
+    if(cur===0) order=shuffle(order);
+    // ended 이벤트 안에서 load()를 호출하면 iOS가 오디오를 재잠금 → play() 차단
+    // src만 바꾸면 브라우저가 자동으로 새 파일을 로드함 (HTML 스펙)
+    audio.src=BGM_TRACKS[order[cur]].src;
+    audio.volume=0.42;
+    audio.play().catch(function(){});
   }
   function playSong(idx){
+    // startBGM(첫 재생)에서만 호출 — load()로 tryAutoplay 오류 상태 리셋
     audio.src=BGM_TRACKS[idx].src;
     audio.volume=0.42;
-    audio.load(); // 곡 전환 시 — 이미 재생 중인 상태이므로 안전
+    audio.load();
     audio.play().catch(function(){});
   }
   function startBGM(){
     if(started)return; started=true;
     var b=document.getElementById('musicBtn');
     if(b) b.classList.remove('music-hint');
-    // 유저 제스처 컨텍스트 안에서 src 재설정 + load() + play() — iOS 최적 패턴
     order=shuffle(BGM_TRACKS.map(function(_,i){return i;}));
     cur=0;
-    playSong(order[0]);
+    playSong(order[0]); // 유저 제스처 안 → load()+play() 안전
   }
   audio.addEventListener('ended',nextSong);
 
