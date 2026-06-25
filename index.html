@@ -753,7 +753,7 @@ function doJoinRoom(){
 //  Host 연결 처리 (WebSocket 릴레이)
 // ════════════════════════════════════
 function onGuestJoin(guestIdx){
-  if(Object.keys(players).length+connState.size>=MAX_PLAYERS-1){
+  if(connState.size>=MAX_PLAYERS-1){
     wsSend({type:'full',_to:guestIdx}); return;
   }
   connState.set(guestIdx,'pending');
